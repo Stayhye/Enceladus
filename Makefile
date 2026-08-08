@@ -1,29 +1,29 @@
-.SILENT:                                                                              
+.SILENT:                                                                
 
 define HEADER
-                                                                       
-   @@@@@@@@*#                                                              
+                                                                        
+   @@@@@@@@*#                                                           
   @@@# @@@@@@@ @@@@%                                                    
-   @@@.@@@@@@@@@@@@@@@@@@*       &&&&&&&.                                
+   @@@.@@@@@@@@@@@@@@@@@@*       &&&&&&&.                               
      ,@@@@@@@@        @@@@@@&&&&&&&&&&&&&&&&                            
        *@@@@@@@          &&&&&&&&&@&&&&&&&&&&&&                         
-          @@@@@@@      &&&&&&&&@@@@@@@@&&&&&&&&&&       @@@@@@       
-             /@@@@@   &&&&&&@@@@@@@@@@@@@@&&&&  &&&   @@@@@@@@@@     
-                 @@@@@@&&&&@@@@@@@@@@@@@@@@@@     &&  @@@@@@@@@@     
-                    @@&@@@&&@@@@@@@@@@@@@@@@@      && @@@@@@@@@@     
-                     &&&@@@@@@&@@@@@@@@@@@@@@@    &&&   @@@@@@.      
-                      &&&&&@@@@@@&&@@@@@@@@@@@@@&&&&&               
-                      &&&&&&&@@@@@@@@@@@@@@@@@@&&&&&&@@@                
-                       (&&&&&&&@@@@&@@@@@@@@@@&&&&&& #@@@@@.            
-                         &&&&&&&&&@@@@@&&@@@&&&&&&&     @@@@@@/         
-                           &&&&&&&&@@@@@@@@@&&&&&         @@@@@@@       
-                              &&&&&&&&&&&&@@@@@@@@@        @@@@@@@@,    
-                                   &&&&&&&,     @@@@@@@@@@@@@@@@@@@@@@
-                                                        &@@@@ @@@@@@@.
+          @@@@@@@      &&&&&&&&@@@@@@@@&&&&&&&&&&       @@@@@@          
+             /@@@@@   &&&&&&@@@@@@@@@@@@@@&&&&  &&&   @@@@@@@@@@        
+                 @@@@@@&&&&@@@@@@@@@@@@@@@@@@     &&  @@@@@@@@@@        
+                   @@&@@@&&@@@@@@@@@@@@@@@@@      && @@@@@@@@@@        
+                    &&&@@@@@@&@@@@@@@@@@@@@@@    &&&   @@@@@@.          
+                     &&&&&@@@@@@&&@@@@@@@@@@@@@&&&&&                    
+                     &&&&&&&@@@@@@@@@@@@@@@@@@&&&&&&@@@                 
+                      (&&&&&&&@@@@&@@@@@@@@@@&&&&&& #@@@@@.             
+                        &&&&&&&&&@@@@@&&@@@&&&&&&&     @@@@@@/          
+                          &&&&&&&&@@@@@@@@@&&&&&         @@@@@@@        
+                             &&&&&&&&&&&&@@@@@@@@@         @@@@@@@@,    
+                                  &&&&&&&,     @@@@@@@@@@@@@@@@@@@@@@
+                                                       &@@@@ @@@@@@@.
 
                                             
                             Enceladus project                                                               
-                                                                                
+                                                                        
 endef
 export HEADER
 
@@ -43,9 +43,10 @@ BINDIR = bin/
 EE_BIN = $(BINDIR)enceladus.elf
 EE_BIN_PKD = $(BINDIR)enceladus_pkd.elf
 
+# Added -lcdvd to EE_LIBS for sceCd function resolution
 EE_LIBS = -L$(PS2SDK)/ports/lib -L$(PS2DEV)/gsKit/lib/ -Lmodules/ds34bt/ee/ -Lmodules/ds34usb/ee/ \
-	-lpatches -lfileXio -lpad -ldebug -llua -lmath3d -ljpeg -lfreetype -lgskit_toolkit -lgskit -ldmakit \
-	-lpng -lz -lmc -laudsrv -lelf-loader -lds34bt -lds34usb
+    -lpatches -lfileXio -lcdvd -lpad -ldebug -llua -lmath3d -ljpeg -lfreetype -lgskit_toolkit -lgskit -ldmakit \
+    -lpng -lz -lmc -laudsrv -lelf-loader -lds34bt -lds34usb
 
 EE_INCS += -I$(PS2DEV)/gsKit/include -I$(PS2SDK)/ports/include -I$(PS2SDK)/ports/include/freetype2 -I$(PS2SDK)/ports/include/zlib
 
@@ -69,17 +70,18 @@ BIN2S = $(PS2SDK)/bin/bin2c
 EXT_LIBS = modules/ds34usb/ee/libds34usb.a modules/ds34bt/ee/libds34bt.a
 
 APP_CORE = main.o system.o pad.o graphics.o render.o \
-		   calc_3d.o gsKit3d_sup.o atlas.o fntsys.o md5.o \
-		   sound.o
+           calc_3d.o gsKit3d_sup.o atlas.o fntsys.o md5.o \
+           sound.o
 
-LUA_LIBS =	player.o sound.o controls.o \
-			timer.o Screen.o graphics.o \
-			system.o Render.o
+LUA_LIBS = player.o sound.o controls.o \
+           timer.o Screen.o graphics.o \
+           system.o Render.o
 
+# Added cdvd.o to embedded IOP modules
 IOP_MODULES = iomanX.o fileXio.o \
-			  sio2man.o mcman.o mcserv.o padman.o libsd.o \
-			  usbd.o audsrv.o bdm.o bdmfs_fatfs.o \
-			  usbmass_bd.o cdfs.o ds34bt.o ds34usb.o
+              sio2man.o mcman.o mcserv.o padman.o libsd.o \
+              usbd.o audsrv.o bdm.o bdmfs_fatfs.o \
+              usbmass_bd.o cdvd.o cdfs.o ds34bt.o ds34usb.o
 
 EMBEDDED_RSC = boot.o
 
@@ -87,7 +89,7 @@ ifeq ($(F_KEYBOARD),1)
   EE_CXXFLAGS += -DPS2KBD
   EE_LIBS += -lkbd
   IOP_MODULES += ps2kbd.o
-  LUA_LIBS +=  Keyboard.o
+  LUA_LIBS += Keyboard.o
 endif
 
 ifeq ($(POWERPC_UART),1)
@@ -131,6 +133,10 @@ IRXTAG = $(notdir $(addsuffix _irx, $(basename $<)))
 $(EE_ASM_DIR)%.c: %.irx
 	$(DIR_GUARD)
 	$(BIN2S) $< $@ $(IRXTAG)
+
+# CDVD IRX Conversion Rule
+$(EE_ASM_DIR)cdvd.c: $(PS2SDK)/iop/irx/cdvd.irx | $(EE_ASM_DIR)
+	$(BIN2S) $< $@ cdvd_irx
 
 $(EE_ASM_DIR)ps2kbd.c: $(PS2SDK)/iop/irx/ps2kbd.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ ps2kbd_irx
