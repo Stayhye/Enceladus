@@ -9,132 +9,130 @@
 static bool adpcm_started = false;
 static bool audsrv_started = false;
 
-/*static int fillbuffer(void *arg)
-{
-	iSignalSema((int)arg);
-	return 0;
-}*/
-
-/*int main(int argc, char **argv)
-{
-	int ret;
-	int played;
-	int err;
-	int bytes;
-	char chunk[2048];
-	FILE *wav;
-	ee_sema_t sema;
-	int fillbuffer_sema;
-
-	sema.init_count = 0;
-	sema.max_count = 1;
-	sema.option = 0;
-	fillbuffer_sema = CreateSema(&sema);
-
-	audsrv_on_fillbuf(sizeof(chunk), fillbuffer, (void *)fillbuffer_sema);
-
-	wav = fopen("host:song_22k.wav", "rb");
-
-	fseek(wav, 0x30, SEEK_SET);
-
-	printf("starting play loop\n");
-	played = 0;
-	bytes = 0;
-	while (1)
-	{
-		ret = fread(chunk, 1, sizeof(chunk), wav);
-		if (ret > 0)
-		{
-			WaitSema(fillbuffer_sema);
-			audsrv_play_audio(chunk, ret);
-		}
-
-		if (ret < sizeof(chunk))
-		{
-			break;
-		}
-
-		played++;
-		bytes = bytes + ret;
-
-		if (played % 8 == 0)
-		{
-			printf("\r%d bytes sent..", bytes);
-		}
-
-		if (played == 512) break;
-	}
-
-	fclose(wav);
-
-}*/
-
-
 void sound_setvolume(int volume) {
-    if(!audsrv_started) {
-        audsrv_init();
-        audsrv_started = true;
+    if (!audsrv_started) {
+        if (audsrv_init() == 0) {
+            audsrv_started = true;
+        } else {
+            printf("[AUDSRV] Error: Failed to initialize audsrv\n");
+            return;
+        }
     }
 
-	audsrv_set_volume(volume);
+    audsrv_set_volume(volume);
 }
 
-void sound_setformat(int bits, int freq, int channels){
-    if(!audsrv_started) {
-        audsrv_init();
-        audsrv_started = true;
+void sound_setformat(int bits, int freq, int channels) {
+    if (!audsrv_started) {
+        if (audsrv_init() == 0) {
+            audsrv_started = true;
+        } else {
+            printf("[AUDSRV] Error: Failed to initialize audsrv\n");
+            return;
+        }
     }
 
-	struct audsrv_fmt_t format;
-
+    struct audsrv_fmt_t format;
     format.bits = bits;
-	format.freq = freq;
-	format.channels = channels;
-	
-	audsrv_set_format(&format);
+    format.freq = freq;
+    format.channels = channels;
+    
+    audsrv_set_format(&format);
 }
 
 void sound_setadpcmvolume(int slot, int volume) {
-    if(!adpcm_started) {
-        audsrv_adpcm_init();
-        adpcm_started = true;
+    if (!adpcm_started) {
+        if (audsrv_adpcm_init() == 0) {
+            adpcm_started = true;
+        } else {
+            printf("[AUDSRV] Error: Failed to initialize ADPCM sub-system\n");
+            return;
+        }
     }
 
-	audsrv_adpcm_set_volume(slot, volume);
+    audsrv_adpcm_set_volume(slot, volume);
 }
 
-audsrv_adpcm_t* sound_loadadpcm(const char* path){
-    if(!adpcm_started) {
-        audsrv_adpcm_init();
-        adpcm_started = true;
+audsrv_adpcm_t* sound_loadadpcm(const char* path) {
+    if (!adpcm_started) {
+        if (audsrv_adpcm_init() == 0) {
+            adpcm_started = true;
+        } else {
+            printf("[AUDSRV] Error: Cannot load ADPCM - driver not started\n");
+            return NULL;
+        }
     }
 
-	FILE* adpcm;
-	audsrv_adpcm_t *sample = (audsrv_adpcm_t *)malloc(sizeof(audsrv_adpcm_t));
-	int size;
-	u8* buffer;
+    FILE* adpcm = fopen(path, "rb");
+    if (!adpcm) {
+        printf("[AUDSRV] Error: Could not open file at path: %s\n", path);
+        return NULL;
+    }
 
-	adpcm = fopen(path, "rb");
+    // Determine file size safely
+    fseek(adpcm, 0, SEEK_END);
+    int size = ftell(adpcm);
+    fseek(adpcm, 0, SEEK_SET);
 
-	fseek(adpcm, 0, SEEK_END);
-	size = ftell(adpcm);
-	fseek(adpcm, 0, SEEK_SET);
+    if (size <= 0) {
+        printf("[AUDSRV] Error: File %s is empty or invalid size (%d)\n", path, size);
+        fclose(adpcm);
+        return NULL;
+    }
 
-	buffer = (u8*)malloc(size);
+    // Allocate memory for sample metadata struct
+    audsrv_adpcm_t *sample = (audsrv_adpcm_t *)malloc(sizeof(audsrv_adpcm_t));
+    if (!sample) {
+        printf("[AUDSRV] Error: Out of memory for ADPCM structure\n");
+        fclose(adpcm);
+        return NULL;
+    }
 
-	fread(buffer, 1, size, adpcm);
-	fclose(adpcm);
+    // Allocate raw PCM data buffer
+    u8* buffer = (u8*)malloc(size);
+    if (!buffer) {
+        printf("[AUDSRV] Error: Out of memory allocating %d bytes for sample buffer\n", size);
+        free(sample);
+        fclose(adpcm);
+        return NULL;
+    }
 
-	audsrv_load_adpcm(sample, buffer, size);
+    // Read full audio buffer
+    int bytes_read = fread(buffer, 1, size, adpcm);
+    fclose(adpcm);
 
-	return sample;
+    if (bytes_read != size) {
+        printf("[AUDSRV] Error: Expected %d bytes, only read %d\n", size, bytes_read);
+        free(buffer);
+        free(sample);
+        return NULL;
+    }
+
+    // Pass buffer to audsrv engine
+    if (audsrv_load_adpcm(sample, buffer, size) != 0) {
+        printf("[AUDSRV] Error: audsrv_load_adpcm failed for %s\n", path);
+        free(buffer);
+        free(sample);
+        return NULL;
+    }
+
+    return sample;
 }
 
 void sound_playadpcm(int slot, audsrv_adpcm_t *sample) {
-    if(!adpcm_started) {
-        audsrv_adpcm_init();
-        adpcm_started = true;
+    if (!adpcm_started) {
+        if (audsrv_adpcm_init() == 0) {
+            adpcm_started = true;
+        } else {
+            printf("[AUDSRV] Error: ADPCM driver not running\n");
+            return;
+        }
     }
 
-	audsrv_ch_play_adpcm(slot, sample);
+    if (!sample) {
+        printf("[AUDSRV] Warning: Attempted to play NULL sample in slot %d\n", slot);
+        return;
+    }
+
+    audsrv_ch_play_adpcm(slot, sample);
 }
