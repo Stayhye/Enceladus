@@ -44,6 +44,7 @@ IMPORT_BIN2C(mcman_irx);
 IMPORT_BIN2C(mcserv_irx);
 IMPORT_BIN2C(padman_irx);
 IMPORT_BIN2C(libsd_irx);
+IMPORT_BIN2C(cdvd_irx); // <-- ADDED: Hardware CD/DVD driver
 IMPORT_BIN2C(cdfs_irx);
 IMPORT_BIN2C(usbd_irx);
 IMPORT_BIN2C(bdm_irx);
@@ -62,28 +63,55 @@ char boot_path[255];
 void initMC(void)
 {
    int ret;
-   // mc variables
    int mc_Type, mc_Free, mc_Format;
 
-   
    printf("initMC: Initializing Memory Card\n");
 
    ret = mcInit(MC_TYPE_XMC);
    
    if( ret < 0 ) {
-	printf("initMC: failed to initialize memcard server.\n");
+    printf("initMC: failed to initialize memcard server.\n");
    } else {
        printf("initMC: memcard server started successfully.\n");
    }
    
-   // Since this is the first call, -1 should be returned.
-   // makes me sure that next ones will work !
    mcGetInfo(0, 0, &mc_Type, &mc_Free, &mc_Format); 
    mcSync(MC_WAIT, NULL, &ret);
 }
 
+// Function to properly initialize CD/DVD hardware and check disc status
+void initCDVD(void)
+{
+    printf("initCDVD: Initializing CD/DVD Subsystem...\n");
+    
+    // Fixed: SCECdINIT initializes RPC services (SCECdINoD disables it!)
+    sceCdInit(SCECdINIT);
+    sceCdMmode(SCECdCD); // Set media mode to standard
+
+    // Wait until disc drive status is ready (max 3 seconds)
+    int retries = 300;
+    int disc_stat;
+
+    while (retries > 0) {
+        disc_stat = sceCdGetDiskType();
+        if (disc_stat != SCECdNODISC && disc_stat != SCECdDETCT) {
+            break; // Disc detected and ready
+        }
+        nopdelay();
+        usleep(10000); // 10ms wait
+        retries--;
+    }
+
+    if (disc_stat == SCECdNODISC) {
+        printf("initCDVD: No disc found in drive.\n");
+    } else {
+        printf("initCDVD: Disc ready. Media type code: 0x%X\n", disc_stat);
+        sceCdDiskReady(0); // Spindown/Readiness call
+    }
+}
+
 #ifdef DONT_LOAD_FILEXIO_ON_HOST_DEVICE
-int HAVE_FILEXIO = 1; // for PS2CLIENT
+int HAVE_FILEXIO = 1;
 #else
 int HAVE_FILEXIO = 0;
 #endif
@@ -105,27 +133,27 @@ int main(int argc, char * argv[])
     SifInitRpc(0);
     #endif
     
-    // install sbv patch fix
     printf("Installing SBV Patches...\n");
     sbv_patch_enable_lmb();
     sbv_patch_disable_prefix_check();
     sbv_patch_fileio();
+
 #ifdef POWERPC_UART
-	LOAD_IRX_NARG(ppctty_irx);
+    LOAD_IRX_NARG(ppctty_irx);
 #endif
 
 #ifdef DONT_LOAD_FILEXIO_ON_HOST_DEVICE
-	DIR *directorytoverify;
-	directorytoverify = opendir("host:.");
-	if (directorytoverify==NULL) {
+    DIR *directorytoverify;
+    directorytoverify = opendir("host:.");
+    if (directorytoverify==NULL) {
 #endif
-		LOAD_IRX_NARG(iomanX_irx);
-		LOAD_IRX_NARG(fileXio_irx);
-		fileXioInit();
+        LOAD_IRX_NARG(iomanX_irx);
+        LOAD_IRX_NARG(fileXio_irx);
+        fileXioInit();
         if (ID > 0 && RET != 1) HAVE_FILEXIO = 1;
 #ifdef DONT_LOAD_FILEXIO_ON_HOST_DEVICE
-		closedir(directorytoverify);
-	}
+        closedir(directorytoverify);
+    }
 #endif
   
     LOAD_IRX_NARG(sio2man_irx);
@@ -152,12 +180,12 @@ int main(int argc, char * argv[])
     LOAD_IRX_NARG(bdmfs_fatfs_irx);
     LOAD_IRX_NARG(usbmass_bd_irx);
     
-    LOAD_IRX_NARG(cdfs_irx);
-    sceCdInit(SCECdINoD);
-    
+    // --- CD/DVD HARDWARE AND FILESYSTEM INIT ---
+    LOAD_IRX_NARG(cdvd_irx); // Load low-level hardware IRX first
+    LOAD_IRX_NARG(cdfs_irx); // Load filesystem IRX
+    initCDVD();              // Initialize RPC & drive status
 
-    //waitUntilDeviceIsReady by fjtrujy
-
+    // Wait until USB mass storage device is ready
     struct stat buffer;
     int ret = -1;
     int retries = 50;
@@ -165,19 +193,12 @@ int main(int argc, char * argv[])
     while(ret != 0 && retries > 0)
     {
         ret = stat("mass:/", &buffer);
-        /* Wait until the device is ready */
         nopdelay();
-
         retries--;
     }
-	
-	
-	// Lua init
-	// init internals library
     
     // graphics (gsKit)
     initGraphics();
-
     pad_init();
 
     // set base path luaplayer
@@ -188,8 +209,6 @@ int main(int argc, char * argv[])
     
     while (1)
     {
-    
-        // if no parameters are specified, use the default boot
         if (argc < 2) {
             errMsg = runScript(bootString, true); 
         } else {
@@ -201,21 +220,19 @@ int main(int argc, char * argv[])
         if (errMsg != NULL)
         {
             scr_setfontcolor(0x0000ff);
-            sleep(1); //ensures message is printed no matter what
-		    scr_clear();
-		    scr_setXY(5, 2);
-		    scr_printf("Enceladus ERROR!\n");
-		    scr_printf(errMsg);
-		    puts(errMsg);
-		    scr_printf("\nPress [start] to restart\n");
-        	while (!isButtonPressed(PAD_START)) {
-                	sleep(1);
-		    }
+            sleep(1);
+            scr_clear();
+            scr_setXY(5, 2);
+            scr_printf("Enceladus ERROR!\n");
+            scr_printf(errMsg);
+            puts(errMsg);
+            scr_printf("\nPress [start] to restart\n");
+            while (!isButtonPressed(PAD_START)) {
+                sleep(1);
+            }
             scr_setfontcolor(0xffffff);
         }
-
     }
 
-	return 0;
+    return 0;
 }
-
